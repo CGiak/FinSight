@@ -16,7 +16,25 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [initialFetchLoading, setInitialFetchLoading] = useState(false);
 
-  // --- NEW: Currency State ---
+  // ---  Briefing State ---
+  const [briefing, setBriefing] = useState("");
+  const [isGeneratingBriefing, setIsGeneratingBriefing] = useState(false);
+  const generateBriefing = async () => {
+    setIsGeneratingBriefing(true);
+    setBriefing("");
+    try {
+      const response = await axios.get("http://127.0.0.1:8000/api/portfolio/briefing", {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      setBriefing(response.data.briefing);
+    } catch (error) {
+      alert(error.response?.data?.detail || "Could not generate briefing.");
+    } finally {
+      setIsGeneratingBriefing(false);
+    }
+  };
+
+  // ---  Currency State ---
   const [currency, setCurrency] = useState("USD");
   const [exchangeRates, setExchangeRates] = useState({ USD: 1 });
 
@@ -82,6 +100,7 @@ function App() {
     setPortfolio([]);
   };
 
+  // Add stock function that updates the UI instantly without reloading the page
   const addStock = async (e) => {
     e.preventDefault();
     if (!tickerInput) return;
@@ -101,7 +120,20 @@ function App() {
     }
   };
 
-  // --- NEW: Dynamic Price Formatter ---
+  // Remove stock function that updates the UI instantly without reloading the page
+  const removeStock = async (assetId) => {
+    try {
+      await axios.delete(`http://127.0.0.1:8000/api/portfolio/${assetId}`, {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      // Instantly remove it from the UI without reloading the page
+      setPortfolio(portfolio.filter(stock => stock.id !== assetId));
+    } catch (error) {
+      alert("Could not remove stock.");
+    }
+  };
+
+  // --- Dynamic Price Formatter ---
   const formatPrice = (priceInUSD) => {
     const rate = exchangeRates[currency] || 1;
     const convertedPrice = priceInUSD * rate;
@@ -190,6 +222,32 @@ function App() {
         </header>
 
         <main>
+          {/* AI Briefing Banner */}
+          {portfolio.length > 0 && (
+            <div className="mb-8 p-6 bg-gradient-to-r from-blue-900/20 to-purple-900/20 border border-blue-900/40 rounded-xl">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                  ✨ AI Market Briefing
+                </h2>
+                <button 
+                  onClick={generateBriefing}
+                  disabled={isGeneratingBriefing}
+                  className="px-4 py-2 bg-blue-600/30 text-blue-300 hover:bg-blue-600/50 hover:text-white font-medium rounded-md transition-colors disabled:opacity-50 cursor-pointer"
+                >
+                  {isGeneratingBriefing ? "Analyzing Market Data..." : "Generate Briefing"}
+                </button>
+              </div>
+              
+              {briefing && (
+                <div className="text-neutral-300 leading-relaxed space-y-3 border-t border-neutral-800 pt-4">
+                  {briefing.split('\n').map((paragraph, idx) => (
+                    paragraph.trim() && <p key={idx}>{paragraph}</p>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          
           {initialFetchLoading ? (
             <div className="text-center py-20 text-neutral-400 animate-pulse">Loading your portfolio...</div>
           ) : portfolio.length === 0 ? (
@@ -199,18 +257,30 @@ function App() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {portfolio.map((stock) => (
-                <div key={stock.id} className="bg-neutral-900 border border-neutral-800 p-6 rounded-xl shadow-sm">
+                <div key={stock.id} className="bg-neutral-900 border border-neutral-800 p-6 rounded-xl shadow-sm hover:border-neutral-700 transition-all group">
                   <div className="flex justify-between items-start mb-4">
                     <h2 className="text-xl font-bold text-white">{stock.ticker}</h2>
-                    <span className="px-2.5 py-1 bg-neutral-800 text-xs font-medium text-neutral-300 rounded-full">Equity</span>
+                    
+                    {/* Updated Badges/Buttons container */}
+                    <div className="flex items-center gap-3">
+                      <span className="px-2.5 py-1 bg-neutral-800 text-xs font-medium text-neutral-300 rounded-full">
+                        Equity
+                      </span>
+                      {/* NEW: Remove Button */}
+                      <button 
+                        onClick={() => removeStock(stock.id)}
+                        className="text-neutral-600 hover:text-red-400 transition-colors px-1"
+                        title="Remove asset"
+                      >
+                        ✕
+                      </button>
+                    </div>
                   </div>
-                  <p className="text-sm text-neutral-400 mb-1">Current Price</p>
                   
-                  {/* NEW: Using the dynamic formatPrice function */}
+                  <p className="text-sm text-neutral-400 mb-1">Current Price</p>
                   <p className="text-3xl font-light text-white">
                     {formatPrice(stock.price)}
                   </p>
-                  
                 </div>
               ))}
             </div>

@@ -6,6 +6,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 import jwt
 import yfinance as yf
+import ollama
 
 # Import from our local files
 from database import engine, Base, get_db
@@ -129,3 +130,58 @@ def add_asset(asset_data: AssetCreateSchema, current_user: User = Depends(get_cu
         "ticker": new_asset.ticker,
         "price": round(price, 2)
     }
+
+
+@app.delete("/api/portfolio/{asset_id}")
+def remove_asset(asset_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # Find the specific asset linked to the logged-in user
+    asset = db.query(Asset).filter(Asset.id == asset_id, Asset.user_id == current_user.id).first()
+    
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+        
+    db.delete(asset)
+    db.commit()
+    
+    return {"message": "Asset removed successfully"}
+
+@app.get("/api/portfolio/briefing")
+def get_ai_briefing(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # 1. Fetch user assets
+    assets = db.query(Asset).filter(Asset.user_id == current_user.id).all()
+    if not assets:
+        raise HTTPException(status_code=400, detail="Add assets to your portfolio first.")
+
+    tickers = [asset.ticker for asset in assets]
+    
+    # 2. Extract news headlines safely
+    news_context = ""
+    for ticker in tickers:
+        stock = yf.Ticker(ticker)
+        news_items = stock.news[:3] if stock.news else []
+        news_context += f"\nNews for {ticker}:\n"
+        for item in news_items:
+            # Parse nested dictionary structure returned by yfinance safely
+            title = item.get('content', {}).get('title') or item.get('title') or 'No title'
+            news_context += f"- {title}\n"
+
+    # 3. Formulate the prompt
+    prompt = f"""
+    You are an expert financial analyst. Write a concise, two-paragraph market summary 
+    for an investor holding the following stocks: {', '.join(tickers)}. 
+    
+    Base your insights on these recent headlines:
+    {news_context}
+    
+    Do not use complex formatting or headers—just return two clean paragraphs.
+    """
+
+    # 4. Generate local AI response via Ollama
+    try:
+        response = ollama.chat(
+            model="llama3.2",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return {"briefing": response['message']['content']}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ollama connection error: {str(e)}")
